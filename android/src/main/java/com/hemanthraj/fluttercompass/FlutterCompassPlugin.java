@@ -15,6 +15,8 @@ import io.flutter.plugin.common.PluginRegistry.Registrar;
 
 public final class FlutterCompassPlugin implements StreamHandler {
     // A static variable which will retain the value across Isolates.
+    //private static final String TAG = "FlutterCompass";
+
     private static Double currentAzimuth;
     
     private double newAzimuth;
@@ -23,21 +25,27 @@ public final class FlutterCompassPlugin implements StreamHandler {
     private SensorEventListener sensorEventListener;
 
     private final SensorManager sensorManager;
-    private final Sensor sensor;
-    private final float[] orientation;
-    private final float[] rMat;
+    private Sensor gsensor;
+    private Sensor msensor;
+
+    private float[] mGravity = new float[3];
+    private float[] mGeomagnetic = new float[3];
+    private float[] R = new float[9];
+    private float[] I = new float[9];
 
     public static void registerWith(Registrar registrar) {
         EventChannel channel = new EventChannel(registrar.messenger(), "hemanthraj/flutter_compass");
-        channel.setStreamHandler(new FlutterCompassPlugin(registrar.context(), Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR));
+        channel.setStreamHandler(new FlutterCompassPlugin(registrar.context()));
     }
 
 
     public void onListen(Object arguments, EventSink events) {
         // Added check for the sensor, if null then the device does not have the TYPE_ROTATION_VECTOR or TYPE_GEOMAGNETIC_ROTATION_VECTOR sensor
-        if(sensor != null) {
+        if(this.gsensor != null && this.msensor != null) {
             sensorEventListener = createSensorEventListener(events);
-            sensorManager.registerListener(sensorEventListener, this.sensor, SensorManager.SENSOR_DELAY_UI);
+            sensorManager.registerListener(sensorEventListener, this.gsensor, SensorManager.SENSOR_DELAY_GAME);
+            sensorManager.registerListener(sensorEventListener, this.msensor, SensorManager.SENSOR_DELAY_GAME);
+
         } else {
             // Send null to Flutter side
             events.success(null);
@@ -56,55 +64,78 @@ public final class FlutterCompassPlugin implements StreamHandler {
             }
 
             public void onSensorChanged(SensorEvent event) {
-                SensorManager.getRotationMatrixFromVector(rMat, event.values);
-                newAzimuth = (Math.toDegrees((double) SensorManager.getOrientation(rMat, orientation)[0]) + (double) 360) % (double) 360;
-                if (currentAzimuth == null || Math.abs(currentAzimuth - newAzimuth) >= filter) {
-                    currentAzimuth = newAzimuth;
 
-                    // Compute the orientation relative to the Z axis (out the back of the device).
-                    float[] zAxisRmat = new float[9];
-                    SensorManager.remapCoordinateSystem(
-                        rMat,
-                        SensorManager.AXIS_X,
-                        SensorManager.AXIS_Z,
-                        zAxisRmat);
-                    float[] dv = new float[3]; 
-                    SensorManager.getOrientation(zAxisRmat, dv);
-                    double azimuthForCameraMode = (Math.toDegrees((double) dv[0]) + (double) 360) % (double) 360;
+                final float alpha = 0.97f;
 
-                    double[] v = new double[3];
-                    v[0] = newAzimuth;
-                    v[1] = azimuthForCameraMode;
-                    // Include reasonable compass accuracy numbers. These are not representative
-                    // of the real error.
-                    if (lastAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_HIGH) {
-                        v[2] = 15;
-                    } else if (lastAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM) {
-                        v[2] = 30;
-                    } else if (lastAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_LOW) {
-                        v[2] = 45;
-                    } else {
-                        v[2] = -1; // unknown
-                    }
-                    events.success(v);
+                // Log.e(TAG + ": SensorType", String.valueOf(event.sensor.getType()));
+
+                if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+
+                    mGravity[0] = alpha * mGravity[0] + (1 - alpha)
+                            * event.values[0];
+                    mGravity[1] = alpha * mGravity[1] + (1 - alpha)
+                            * event.values[1];
+                    mGravity[2] = alpha * mGravity[2] + (1 - alpha)
+                            * event.values[2];
+    
+                    // mGravity = event.values;
+    
+                    // Log.e(TAG + ": mGravity", Float.toString(mGravity[0]));
+    
+                }
+    
+                if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
+                    // mGeomagnetic = event.values;
+    
+                    mGeomagnetic[0] = alpha * mGeomagnetic[0] + (1 - alpha)
+                            * event.values[0];
+                    mGeomagnetic[1] = alpha * mGeomagnetic[1] + (1 - alpha)
+                            * event.values[1];
+                    mGeomagnetic[2] = alpha * mGeomagnetic[2] + (1 - alpha)
+                            * event.values[2];
+                    
+                    // Log.e(TAG + ": mGeomagnetic", Float.toString(mGeomagnetic[0]));
+    
+                }
+    
+                boolean success = SensorManager.getRotationMatrix(R, I, mGravity, mGeomagnetic);
+                // Log.e(TAG + ": success", String.valueOf(success));
+                if (success) {
+                    float orientation[] = new float[3];
+                    SensorManager.getOrientation(R, orientation);
+                    // Log.d(TAG, "azimuth (rad): " + azimuth);
+                    newAzimuth = ((float) Math.toDegrees(orientation[0]) + (double) 360) % (double) 360; // orientation
+                    // Log.d(TAG, "azimuth (deg): " + azimuth);
+                    if (currentAzimuth == null || Math.abs(currentAzimuth - newAzimuth) >= filter) {
+                        currentAzimuth = newAzimuth;
+                        double[] v = new double[3];
+                        v[0] = newAzimuth;
+                        v[1] = newAzimuth;
+                        // Include reasonable compass accuracy numbers. These are not representative
+                        // of the real error.
+                        if (lastAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_HIGH) {
+                            v[2] = 15;
+                        } else if (lastAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM) {
+                            v[2] = 30;
+                        } else if (lastAccuracy == SensorManager.SENSOR_STATUS_ACCURACY_LOW) {
+                            v[2] = 45;
+                        } else {
+                            v[2] = -1; // unknown
+                        }
+                        events.success(v);
+                    }    
                 }
             }
         };
     }
 
-    private FlutterCompassPlugin(Context context, int sensorType, int fallbackSensorType) {
+    private FlutterCompassPlugin(Context context) {
         filter = 0.1F;
         lastAccuracy = 1; // SENSOR_STATUS_ACCURACY_LOW
-
-        sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
-        orientation = new float[3];
-        rMat = new float[9];
-        Sensor defaultSensor = this.sensorManager.getDefaultSensor(sensorType);
-        if (defaultSensor != null) {
-            sensor = defaultSensor;
-        } else {
-            sensor = this.sensorManager.getDefaultSensor(fallbackSensorType);
-        }
+        R = new float[9];
+        this.sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+        this.gsensor = this.sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        this.msensor = this.sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);    
     }
 
 }
