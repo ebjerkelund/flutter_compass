@@ -17,15 +17,17 @@ class CompassEvent {
   // Android several values are hard-coded, and the true error could be more
   // or less than the value here.
   final double accuracy;
+  final double type;
 
   CompassEvent.fromList(List<double> data)
       : heading = data[0],
         headingForCameraMode = data[1],
-        accuracy = data[2] == -1 ? null : data[2];
+        accuracy = data[2] == -1 ? null : data[2],
+        type = data[3];
 
   @override
   String toString() {
-    return 'heading: $heading\nheadingForCameraMode: $headingForCameraMode\naccuracy: $accuracy';
+    return 'heading: $heading\nheadingForCameraMode: $headingForCameraMode\naccuracy: $accuracy\ntype: $type';
   }
 }
 
